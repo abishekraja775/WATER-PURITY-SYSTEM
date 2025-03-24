@@ -1,0 +1,224 @@
+#define BLYNK_TEMPLATE_ID "TMPL3bIrZpkbh" 
+#define BLYNK_TEMPLATE_NAME "TESTING WATER"
+#define BLYNK_AUTH_TOKEN "9yKynUyDXtnAzmZZMnTmWBV8ZZ8D1waZ"
+
+// Comment this out to disable prints and save space
+#define BLYNK_PRINT Serial
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// Your WiFi credentials.
+char ssid1[] = "TARUN";
+char pass1[] = "12345678";
+
+char ssid2[] = "OTHER_WIFI";
+char pass2[] = "87654321";
+
+char auth[] = BLYNK_AUTH_TOKEN;
+
+// LCD I2C Address and dimensions (adjust according to your module)
+LiquidCrystal_I2C lcd(0x27, 16, 2); // 0x27 is the default I2C address for most LCDs
+
+// DS18B20 Temperature Sensor setup
+const int oneWireBus = 4; // GPIO4 for DS18B20 data pin
+OneWire oneWire(oneWireBus);
+DallasTemperature sensors(&oneWire);
+
+namespace pin {
+    const byte tds_sensor = 34;        // GPIO34 for TDS sensor
+    const byte turbidity_sensor = 35;  // GPIO35 for Turbidity sensor
+}
+
+namespace device {
+    float aref = 3.3; // Vref for 3.3v controller boards
+}
+
+namespace sensor {
+    float ec = 0;          // Electrical Conductivity for TDS
+    unsigned int tds = 0;  // TDS value
+    float ecCalibration = 1;
+    
+    float turbidity = 0;   // Turbidity value
+    float temperature = 0; // Temperature value (DS18B20)
+    float ph = 0;          // pH value
+}
+
+void setup() {
+    Serial.begin(115200); // Debugging on hardware Serial 0
+
+    // Try connecting to the first Wi-Fi network
+    WiFi.begin(ssid1, pass1);
+    if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+        // If connection fails, try the second Wi-Fi network
+        WiFi.begin(ssid2, pass2);
+        if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+            Serial.println("WiFi connection failed.");
+        }
+    }
+
+    // Initialize Blynk if Wi-Fi is connected
+    if (WiFi.status() == WL_CONNECTED) {
+        Blynk.begin(auth, ssid1, pass1);
+    }
+
+    // Initialize the LCD
+    lcd.begin();
+    lcd.backlight();       // Turn on the LCD backlight
+    lcd.setCursor(0, 0);
+    lcd.print("Initializing...");
+
+    // Initialize DS18B20 sensor
+    sensors.begin();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Water Monitoring");
+    lcd.setCursor(0, 1);
+    lcd.print("System");
+    delay(2000); // Display title for 2 seconds
+}
+
+void loop() {
+    if (WiFi.status() == WL_CONNECTED) {
+        Blynk.run();
+    }
+
+    // Generate and display random pH value
+    generateRandomPh();
+    displayPh();
+    delay(2000);           // 2-second delay
+    
+    // Read and display TDS, EC, Turbidity, and Temperature values
+    readTdsQuick();
+    displayTds();          // Display TDS on LCD
+    delay(2000);           // 2-second delay
+
+    readTurbidityQuick();
+    displayTurbidity();    // Display Turbidity on LCD
+    delay(2000);           // 2-second delay
+
+    readTemperature();
+    displayTemperature();  // Display Temperature on LCD
+    delay(2000);           // 2-second delay
+}
+
+void generateRandomPh() {
+    // Generate a random pH value between 8.00 and 11.00
+    sensor::ph = random(800, 1101) / 100.0;
+    Serial.print("Random pH: ");
+    Serial.println(sensor::ph);
+}
+
+void readTdsQuick() {
+    // Read the raw analog value and convert to voltage
+    float rawEc = analogRead(pin::tds_sensor) * device::aref / 4095.0; // 12-bit ADC for ESP32
+    
+    // Debugging: Print the raw analog value
+    Serial.print(F("Raw Analog Value (TDS): "));
+    Serial.println(rawEc);
+
+    // Adjust this offset based on the sensor's dry reading (without immersion)
+    float offset = 0.14; // Set this to the observed raw analog value in air
+
+    // Apply calibration and offset compensation
+    sensor::ec = (rawEc * sensor::ecCalibration) - offset;
+
+    // If the EC is below zero after adjustment, set it to zero
+    if (sensor::ec < 0) sensor::ec = 0;
+
+    // Convert voltage value to TDS value using a cubic equation
+    sensor::tds = (133.42 * pow(sensor::ec, 3) - 255.86 * sensor::ec * sensor::ec + 857.39 * sensor::ec) * 0.5;
+
+    // Debugging: Print the TDS and EC values
+    Serial.print(F("TDS: "));
+    Serial.println(sensor::tds);
+    Serial.print(F("EC: "));
+    Serial.println(sensor::ec, 2);
+
+    // Send data to Blynk virtual pins if Wi-Fi is connected
+    if (WiFi.status() == WL_CONNECTED) {
+        Blynk.virtualWrite(V0, sensor::tds);
+        Blynk.virtualWrite(V1, sensor::ec);
+    }
+}
+
+void readTurbidityQuick() {
+    // Read the raw analog value for turbidity and convert to voltage
+    float rawTurbidity = analogRead(pin::turbidity_sensor) * device::aref / 4095.0; // 12-bit ADC for ESP32
+    
+    // Debugging: Print the raw analog value
+    Serial.print(F("Raw Analog Value (Turbidity): "));
+    Serial.println(rawTurbidity);
+
+    // Turbidity calculation: Adjust the offset and scale if needed
+    float offset = 0.5; // Set this to the observed raw analog value in clear water
+    sensor::turbidity = (rawTurbidity - offset) * 100; // Adjust the scale based on sensor specs
+
+    // If turbidity is below zero after adjustment, set it to zero
+    if (sensor::turbidity < 0) sensor::turbidity = 0;
+
+    // Debugging: Print the turbidity value
+    Serial.print(F("Turbidity: "));
+    Serial.println(sensor::turbidity, 2);
+
+    // Send turbidity data to Blynk virtual pin if Wi-Fi is connected
+    if (WiFi.status() == WL_CONNECTED) {
+        Blynk.virtualWrite(V2, sensor::turbidity);
+    }
+}
+
+void readTemperature() {
+    // Request temperature reading from DS18B20 sensor
+    sensors.requestTemperatures();
+    sensor::temperature = sensors.getTempCByIndex(0); // Read temperature in Celsius
+    
+    // Debugging: Print the temperature value
+    Serial.print(F("Temperature: "));
+    Serial.println(sensor::temperature);
+    
+    // Send temperature data to Blynk virtual pin if Wi-Fi is connected
+    if (WiFi.status() == WL_CONNECTED) {
+        Blynk.virtualWrite(V3, sensor::temperature);
+    }
+}
+
+void displayPh() {
+    // Clear the LCD and display random pH value
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("pH: ");
+    lcd.print(sensor::ph, 2);
+}
+
+void displayTds() {
+    // Clear the LCD and print TDS and EC values
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("TDS: ");
+    lcd.print(sensor::tds);
+    lcd.setCursor(0, 1);
+    lcd.print("EC: ");
+    lcd.print(sensor::ec, 2);
+}
+
+void displayTurbidity() {
+    // Clear the LCD and print Turbidity value
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Turbidity:");
+    lcd.setCursor(0, 1);
+    lcd.print(sensor::turbidity, 2);
+    lcd.print(" NTU");
+}
+
+void displayTemperature() {
+    // Clear the LCD and print Temperature value
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Temp: ");
+    lcd.print(sensor::temperature);
+    lcd.print(" C");
+}

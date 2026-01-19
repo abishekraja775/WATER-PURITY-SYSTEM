@@ -2,7 +2,6 @@
 #define BLYNK_TEMPLATE_NAME "TESTING WATER"
 #define BLYNK_AUTH_TOKEN "9yKynUyDXtnAzmZZMnTmWBV8ZZ8D1waZ"
 
-// Comment this out to disable prints and save space
 #define BLYNK_PRINT Serial
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -11,7 +10,6 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-// Your WiFi credentials.
 char ssid1[] = "TARUN";
 char pass1[] = "12345678";
 
@@ -20,10 +18,8 @@ char pass2[] = "87654321";
 
 char auth[] = BLYNK_AUTH_TOKEN;
 
-// LCD I2C Address and dimensions (adjust according to your module)
 LiquidCrystal_I2C lcd(0x27, 16, 2); // 0x27 is the default I2C address for most LCDs
 
-// DS18B20 Temperature Sensor setup
 const int oneWireBus = 4; // GPIO4 for DS18B20 data pin
 OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
@@ -50,7 +46,6 @@ namespace sensor {
 void setup() {
     Serial.begin(115200); // Debugging on hardware Serial 0
 
-    // Try connecting to the first Wi-Fi network
     WiFi.begin(ssid1, pass1);
     if (WiFi.waitForConnectResult() != WL_CONNECTED) {
         // If connection fails, try the second Wi-Fi network
@@ -60,18 +55,15 @@ void setup() {
         }
     }
 
-    // Initialize Blynk if Wi-Fi is connected
     if (WiFi.status() == WL_CONNECTED) {
         Blynk.begin(auth, ssid1, pass1);
     }
 
-    // Initialize the LCD
     lcd.begin();
     lcd.backlight();       // Turn on the LCD backlight
     lcd.setCursor(0, 0);
     lcd.print("Initializing...");
 
-    // Initialize DS18B20 sensor
     sensors.begin();
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -86,12 +78,10 @@ void loop() {
         Blynk.run();
     }
 
-    // Generate and display random pH value
     generateRandomPh();
     displayPh();
     delay(2000);           // 2-second delay
     
-    // Read and display TDS, EC, Turbidity, and Temperature values
     readTdsQuick();
     displayTds();          // Display TDS on LCD
     delay(2000);           // 2-second delay
@@ -113,32 +103,24 @@ void generateRandomPh() {
 }
 
 void readTdsQuick() {
-    // Read the raw analog value and convert to voltage
     float rawEc = analogRead(pin::tds_sensor) * device::aref / 4095.0; // 12-bit ADC for ESP32
     
-    // Debugging: Print the raw analog value
     Serial.print(F("Raw Analog Value (TDS): "));
     Serial.println(rawEc);
 
-    // Adjust this offset based on the sensor's dry reading (without immersion)
     float offset = 0.14; // Set this to the observed raw analog value in air
 
-    // Apply calibration and offset compensation
     sensor::ec = (rawEc * sensor::ecCalibration) - offset;
 
-    // If the EC is below zero after adjustment, set it to zero
     if (sensor::ec < 0) sensor::ec = 0;
 
-    // Convert voltage value to TDS value using a cubic equation
     sensor::tds = (133.42 * pow(sensor::ec, 3) - 255.86 * sensor::ec * sensor::ec + 857.39 * sensor::ec) * 0.5;
 
-    // Debugging: Print the TDS and EC values
     Serial.print(F("TDS: "));
     Serial.println(sensor::tds);
     Serial.print(F("EC: "));
     Serial.println(sensor::ec, 2);
 
-    // Send data to Blynk virtual pins if Wi-Fi is connected
     if (WiFi.status() == WL_CONNECTED) {
         Blynk.virtualWrite(V0, sensor::tds);
         Blynk.virtualWrite(V1, sensor::ec);
